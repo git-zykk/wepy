@@ -1,0 +1,15 @@
+{
+	"description": "a wepy project for pitch basic study",
+	"setting": {
+		"urlCheck": true,
+		"es6": false,
+		"postcss": false,
+		"minified": false,
+		"newFeature": true
+	},
+	"compileType": "miniprogram",
+	"appid": "touristappid",
+	"projectname": "pitchbasictest",
+	"miniprogramRoot": "./dist",
+	"condition": {}
+}

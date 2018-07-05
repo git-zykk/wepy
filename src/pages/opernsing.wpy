@@ -1,0 +1,234 @@
+<style lang="less">
+.opern-sing-container {
+  .opern-image-part {
+    // position: absolute;
+    // left: 0;
+    // top: 0;
+    // right: 0;
+    z-index: 2;
+    padding-bottom: 1rpx;
+    margin-bottom: 257rpx;
+  }
+  .foot-group {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    z-index: 999;
+    width: 100%;
+    height: 257rpx;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background-color: #fff;
+  }
+  .button-container {
+    display: flex;
+    justify-content: center;
+  }
+  .result-background-image-container {
+    display: block;
+  }
+}
+</style>
+
+<template>
+  <view class="opern-sing-container">
+    <view class="opern-image-part">
+        <view wx:if="{{resultDisplayDisabled}}" class="record-background-image-container" style="background-image: url({{pictureInfo.pictureUrl}}); background-size: {{pictureInfo.pictureWidth}}px; width: {{pictureInfo.pictureWidth}}px; height:{{pictureInfo.pictureHeight}}px">
+        </view>
+        <view wx:else>
+          <repeat for="{{noteInfo}}" key="index" index="index" item="item">
+            <view class="result-background-image-container" 
+            style="background-image:url({{pictureInfo.pictureUrl}}); background-size: {{pictureInfo.pictureWidth}}px; background-position:0px {{-(item.startY) + 10}}px; width: {{pictureInfo.pictureWidth}}px; height: {{noteInfo[1].startY - noteInfo[0].startY}}px; margin-bottom: {{marginBottomOfPiece}}px">
+            </view>
+          </repeat>
+        </view>
+        <canvasMoveLine
+        :recordingAnalysisResult.sync = "recordingAnalysisResult"
+        :recordingUrl.sync = "recordingUrl"
+        :noteInfo.sync = "noteInfo"
+        :pictureInfo.sync = "pictureInfo"
+        :recordingEachLineMoveStep.sync = "recordingEachLineMoveStep"
+        :marginBottomOfPiece.sync = "marginBottomOfPiece"
+        :recordingEachLineTime.sync = "recordingEachLineTime">
+        </canvasMoveLine>
+    </view>
+    <view class="foot-group">
+      <view class="button-container">
+        <button class="left-play-button" type="{{recordingIsOn ? 'warn' : 'default'}}" @tap="handleOnTapButton('startRecordBtn')">{{recordingIsOn ? '放弃录音' : '开始录音'}}</button>
+        <button class="right-result-button" @tap="handleOnTapButton('drawResultBtn')">查看结果</button>
+      </view>
+    </view>
+    <canvasCountDown :initNum.sync="initNum"></canvasCountDown>
+  </view>
+</template>
+
+<script>
+import wepy from 'wepy'
+import { connect } from 'wepy-redux'
+import canvasMoveLine from '@/components/canvas-move-line'
+import canvasCountDown from '@/components/canvas-count-down'
+import { HTTP, TIPS } from '@/libs'
+import { result, mp3Url } from '@/data'
+
+import { REMOVE_RECORDING_ANALYSIS_RESULT_ACTION } from 'store/types/opernsing'
+import {
+  getOpernInfoByOpernIdAction,
+  uploadRecordingFileAction
+} from 'store/actions/opernsing'
+
+// 要仔细看文档，scroll-view中不要使用textarea、map、canvas、video等组件
+
+@connect(
+  {
+    pictureInfo(state) {
+      return state.opernSing.pictureInfo
+    },
+    noteInfo(state) {
+      return state.opernSing.noteInfo
+    },
+    recordingAnalysisResult(state) {
+      return state.opernSing.recordingAnalysisResult
+    },
+    recordingUrl(state) {
+      return state.opernSing.recordingUrl
+    },
+    recordingEachLineMoveStep(state) {
+      return state.opernSing.recordingEachLineMoveStep
+    },
+    recordingEachLineTime(state) {
+      return state.opernSing.recordingEachLineTime
+    }
+  },
+  {
+    getOpernInfoByOpernIdAction,
+    uploadRecordingFileAction,
+    removeRecordingAnalysisResult: REMOVE_RECORDING_ANALYSIS_RESULT_ACTION,
+  }
+)
+export default class OpernSing extends wepy.page {
+  config = {
+    navigationBarTitleText: '音基测试'
+  }
+
+  //倒计时
+  initNum = 3
+  // 定时器
+  timer = null
+  // 获取全局唯一录音管理器
+  recorderManager = wx.getRecorderManager()
+  // 录音管理器的配置
+  recorderOptions = {
+    duration: 600000,
+    sampleRate: 44100,
+    numberOfChannels: 1,
+    encodeBitRate: 192000,
+    format: 'mp3',
+    frameSize: 50
+  }
+
+  data = {
+    marginBottomOfPiece: 150,
+    scrollTop: 0,
+    resultDisplayDisabled: true,
+    windowWidth: 0,
+    recordingIsOn: false,
+  }
+
+  components = {
+    canvasCountDown: canvasCountDown,
+    canvasMoveLine: canvasMoveLine
+  }
+
+  methods = {
+    handleOnTapButton(buttonName) {
+      switch (buttonName) {
+        case 'startRecordBtn':
+          let recordingIsOn = this.recordingIsOn
+
+          if(recordingIsOn) {
+            this.clearTimerAndFlag()
+          } else {
+            this.resultDisplayDisabled = true
+            this.$broadcast('start-record-event')
+            clearTimeout(this.timer)
+            this.timer = setTimeout(() => {
+              this.startTime = new Date().now
+              this.startRecording()
+            }, 4000)
+          }
+          this.recordingIsOn = !recordingIsOn
+          break
+        case 'drawResultBtn':
+          if (this.recordingAnalysisResult.length) {
+            this.resultDisplayDisabled = false
+            clearTimeout(this.timer)
+            this.stopRecording('default')
+            this.$broadcast('draw-result-event')
+          } else {
+            TIPS.toast('暂无结果', () => {}, 'none')
+          }
+
+          break
+        default:
+          break
+      }
+    }
+  }
+
+  events = {
+    'picture-scroll-view-event': scrollTop => {
+      wx.pageScrollTo({
+        scrollTop,
+        duration: 300
+      })
+    },
+    'stop-recorder-event': () => {
+      this.stopRecording('uploadFile')
+    }
+  }
+
+  startRecording() {
+    this.recorderManager.start(this.recorderOptions)
+    this.recorderManager.onStart(() => {
+    })
+  }
+
+  stopRecording(operator) {
+    this.recorderManager.stop()
+    this.recorderManager.onStop(res => {
+      this.recordingIsOn = false
+      if (operator === 'uploadFile') {
+        this.tempFilePath = res.tempFilePath
+        this.methods.uploadRecordingFileAction({
+          filePath: res.tempFilePath
+        })
+      } else {
+        console.log('do not upload the recording file')
+      }
+    })
+  }
+  
+  clearTimerAndFlag() {
+    clearTimeout(this.timer)
+    this.stopRecording('unload')
+    this.$broadcast('kill-timer-event')
+    this.resultDisplayDisabled = true
+    this.recordingIsOn = false
+  }
+
+  onLoad(options) {
+    this.methods.getOpernInfoByOpernIdAction({
+      opernId: options.id
+    })
+    const systemInfo = wx.getSystemInfoSync()
+    this.windowWidth = systemInfo.windowWidth
+  }
+  onUnload() {
+    // 该页面卸载时，清理所有定时器，初始化所有标志位，清空结果
+    this.clearTimerAndFlag()
+    this.methods.removeRecordingAnalysisResult()
+
+  }
+}
+</script>

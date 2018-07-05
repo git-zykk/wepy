@@ -1,0 +1,118 @@
+<style type="less">
+.canvas-count-down-container {
+  position: fixed;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.3);
+  z-index: 9999;
+}
+</style>
+<template>
+    <view wx:if="{{countDownVisible}}" class="canvas-count-down-container">
+      <canvas canvas-id="{{countDownId}}" wx:if="{{countDownId}}" style="height:{{windowHeight}}px; width:{{windowWidth}}px; display:block;" />
+    </view>
+</template>
+<script>
+import wepy from 'wepy'
+import { generateId } from '@/libs'
+
+export default class canvasCountDown extends wepy.component {
+  props = {
+    initNum: {
+      default: 3,
+      type: Number,
+    },
+  }
+
+  space = 1000
+  timer = null
+
+  data = {
+    countDownId: '',    
+    windowHeight: 0,
+    windowWidth: 0,
+    currentCount: 0,    
+    countDownVisible: false,
+  }
+
+  countDown() {
+    this.countDownVisible = true    
+    let poaitionX = this.windowWidth / 2
+    let poaitionY = this.windowHeight / 2
+    let ctx = wx.createCanvasContext(this.countDownId);
+    let pai2 = 2 * Math.PI
+    let begin = -(1 / 2 * Math.PI)
+
+    let percent = this.currentCount / this.initNum
+    if(this.currentCount === 0) {
+      percent = 1  
+    }
+    // if(this.currentCount === this.initNum) {
+
+    // }
+    ctx.beginPath()
+    //先画背景
+    //把线宽设置成10
+    ctx.setLineWidth(10)
+    //设置端点样式为圆形
+    ctx.setLineCap('round')
+    //设置描边颜色为白色
+    ctx.setStrokeStyle('#ffffff')
+    //先把背景画好
+    ctx.arc(poaitionX, poaitionY, 50, 0, 2 * Math.PI)
+    //把背景圆环描边
+    ctx.stroke()
+    //然后开始画有颜色的部分，也就是代表剩余时间
+    ctx.setLineWidth(6)
+    // if(percent === 0) {
+    //   ctx.arc
+    // }
+    ctx.beginPath()
+
+    ctx.arc(poaitionX, poaitionY, 50, -(1/2*Math.PI), (2*percent-1/2)*Math.PI, true)
+    if(this.currentCount === this.initNum) {
+      ctx.setFillStyle('white')
+      ctx.setFontSize(25)
+      ctx.fillText(this.initNum - this.currentCount, poaitionX-7, poaitionY + 8)
+      ctx.draw()
+      this.currentCount = 0
+      clearTimeout(this.timer)
+      this.countDownVisible = false
+      this.$apply()
+      return      
+    }
+    ctx.setStrokeStyle('#F15A47')
+    ctx.stroke()
+    ctx.setFillStyle('white')
+    ctx.setFontSize(25)
+    ctx.fillText(this.initNum - this.currentCount, poaitionX-7, poaitionY + 8)
+    ctx.draw()
+    this.$apply()
+    this.timer = setTimeout(() => {
+      this.currentCount = this.currentCount + 1
+      this.$apply()
+      this.countDown()
+    }, this.space)
+  }
+
+  events = {
+    'start-record-event': () => {
+      this.countDown()
+    },
+    'kill-timer-event': () => {
+      clearTimeout(this.timer)
+      this.countDownVisible = false
+    }
+  }
+
+  onLoad() {
+    this.countDownId = 'count_down_' + generateId()
+    let systemInfo = wx.getSystemInfoSync()
+    this.windowHeight = systemInfo.windowHeight
+    this.windowWidth = systemInfo.windowWidth
+  }
+}
+</script>
+

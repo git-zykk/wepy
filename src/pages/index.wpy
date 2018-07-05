@@ -1,0 +1,59 @@
+<style lang="less">
+.userinfo {
+  display: flex;
+  flex-direction: column;
+  // align-items: center;
+}
+
+.opern-list-item {
+  text-align: left;
+  border-bottom: 1px solid #dedede;
+  margin-top: 20rpx;
+}
+</style>
+<template>
+  <view class="container">
+    <repeat for="{{opernList}}" key="item.id" index="index" item="item">
+      <view class="opern-list-item" @tap="handleOnJumpBtn({{item.id}})">{{item.name}}</view>
+    </repeat>
+  </view>
+</template>
+
+<script>
+import wepy from 'wepy'
+import { connect } from 'wepy-redux'
+import { 
+  getOpernListAction,
+} from 'store/actions/home'
+
+@connect(
+  {
+    opernList(state) {
+      return state.home.opernList//把reducers里的home的opernList传到当前opernList
+    }
+  },
+  {
+    getOpernListAction,//传参的方法
+  }
+)
+export default class Index extends wepy.page {
+  config = {
+    navigationBarTitleText: '乐谱列表'
+  }//全局设置navigationBarTitleText
+
+  data = {
+  }
+
+  methods = {
+    handleOnJumpBtn(id) {
+      wx.navigateTo({ url: `opernsing?id=${id}` })
+    },
+  }//调用的方法是保留当前页面跳转到url对应的页面并对id传值
+
+  onLoad() {
+    console.log('--index page onLoad--');
+    
+    this.methods.getOpernListAction()//载入界面时调用getOpernListAction
+  }
+}
+</script>

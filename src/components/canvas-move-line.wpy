@@ -1,0 +1,335 @@
+<style type="less">
+.canvas-move-line-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.move-line-view {
+  position: absolute;
+}
+.recording-analysis-result-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+</style>
+<template>
+  <view class="canvas-move-line-container">
+    <canvas class="move-line-canvas" canvas-id="{{moveLineCanvasId}}" wx:if="{{moveLineCanvasId}}" style="height: {{canvasHeight}}px; width: {{canvasWidth}}px;"/>
+    <canvas class="recording-analysis-result-canvas" canvas-id="{{recordingAnalysisResultCanvasId}}" wx:if="{{recordingAnalysisResultCanvasId}}" style="height:{{canvasHeight}}px; width:{{canvasWidth}}px" />
+  </view>  
+</template>
+<script>
+import wepy from 'wepy'
+import { generateId } from '@/libs'
+export default class moveLine extends wepy.page {
+  latterX = 0 //现在距离startX滑动过的距离
+  formerResultLength = 1 //画result，之前截取的长度
+  formerLineNum = 0 //之前画的行数
+  timer = null //记录当前的定时器
+  currentLineNum = 1 //初始化第一行
+  timeoutSpace = 60 //timeout的时间间隔
+  referenceTimeOutSpace = 60 // 参考space
+  moveLineCtx = null
+  recordingAnalysisResultCtx = null
+  tolerancePitchDelta = 1.5
+  formerPitch = 0 //记录上一个音符的音调，
+  mutationPitchDelta = 15
+  startTime = 0
+  backgroundAudioManager = wx.getBackgroundAudioManager() // 获取全局唯一的背景音频管理器
+
+  data = {
+    canvasHeight: 0,
+    canvasWidth: 0,
+    moveLineCanvasId: '',//canvasId
+    recordingAnalysisResultCanvasId: '',
+  }
+
+  props = {
+    noteInfo: {
+      default: null,
+      type: Object
+    },
+    pictureInfo: {
+      default: null,
+      type: Object
+    },
+    marginBottomOfPiece: {
+      default: 150,
+      type: Number
+    },
+    recordingAnalysisResult: {
+      default: [],
+      type: Array
+    },
+    recordingUrl: {
+      default: '',
+      type: String
+    },
+    recordingEachLineMoveStep: {
+      default: [],
+      type: Array
+    },
+    recordingEachLineTime: {
+      default: [],
+      type: Array
+    },
+  }
+
+  drawLine(operator) {
+    this.moveLineCtx = wx.createCanvasContext(this.moveLineCanvasId)    
+    if (operator === 'init') {
+      this.initParamsCanvas()
+      return
+    }
+    //初始化canvas
+    if (operator === 'startDraw') {
+      this.canvasWidth = this.pictureInfo.pictureWidth
+      this.canvasHeight = this.pictureInfo.pictureHeight
+      this.$apply()
+    }
+
+    //最后一行画完，删除整个canvas，删除定时器，并返回
+    if (this.currentLineNum === this.noteInfo.length + 1) {
+      this.initParamsCanvas()
+      this.$emit('stop-recorder-event')
+      return
+    }
+    let { pictureInfo, noteInfo, latterX, currentLineNum, recordingAnalysisResult, moveLineCtx } = this
+    // let startX = pictureInfo.marginX
+    // 画图方法有更新，从这一行的第一个音符开始画图
+    let startX = noteInfo[currentLineNum - 1].noteList[0].x
+    let startY = noteInfo[0].startY
+    let lineSpace = noteInfo[1].startY - noteInfo[0].startY
+    let moveStep = noteInfo[currentLineNum - 1].moveStep
+    let totalLineNum = noteInfo.length
+    // 读取该行的lineWidth
+    let lineWidth = noteInfo[currentLineNum - 1].lineWidth
+
+    moveLineCtx.beginPath()
+    moveLineCtx.setStrokeStyle('green')
+    moveLineCtx.moveTo(startX + latterX, startY + (currentLineNum - 1) * lineSpace - 20)
+    moveLineCtx.lineTo(startX + latterX, startY + currentLineNum * lineSpace - 15)
+    moveLineCtx.stroke()
+    moveLineCtx.closePath()
+    //判断是否已经移动完，没有移动完就继续移动
+    if (currentLineNum <= totalLineNum) {
+      //判断一行内是否已经移动完
+      if (latterX <= lineWidth) {
+        this.latterX += moveStep
+        this.$apply()
+      } else {
+        //如果移动完了，就移动到下一行，将latterX初始化，将行数加1
+        this.latterX = 0
+        this.$emit('picture-scroll-view-event', startY + (currentLineNum - 1) * lineSpace)
+        this.currentLineNum += 1
+        this.$apply()
+      }
+    }
+    moveLineCtx.draw()
+    this.timer = setTimeout(() => {
+      this.drawLine()
+    }, this.timeoutSpace)
+  }
+
+  drawCurve(operator) {
+    let lineDeltaTime = 0
+    // 这里是画完图，将数据全部初始化
+    if(this.currentLineNum === this.noteInfo.length + 1) {
+      this.initParamsCanvas('drawCurveComplete')
+      return
+    }
+    if(operator === 'init') {
+      this.initParamsCanvas()
+      this.canvasHeight = this.noteInfo.length * (this.marginBottomOfPiece + this.noteInfo[1].startY - this.noteInfo[0].startY)
+      this.canvasWidth = this.pictureInfo.pictureWidth
+      this.$apply()
+      this.startTime = new Date().getTime()      
+    }
+    let {
+      formerLineNum,
+      currentLineNum,
+      noteInfo,
+      marginBottomOfPiece,
+      recordingAnalysisResult,
+      recordingAnalysisResultCtx,
+      moveLineCtx,
+      tolerancePitchDelta,
+      mutationPitchDelta,
+      recordingEachLineTime,
+    } = this
+
+    let { minPitch, maxPitch, lineWidth } = noteInfo[currentLineNum - 1]
+    let lineHeight = noteInfo[1].startY - noteInfo[0].startY
+    // 每两条曲线起始点的Y间距
+    let eachLineSpace = marginBottomOfPiece + lineHeight
+    let noteList = noteInfo[currentLineNum - 1].noteList
+    let lineStartX = noteList[0].x
+    let lineYpos = eachLineSpace * (currentLineNum - 1) + lineHeight + marginBottomOfPiece / 4 * 3
+    
+    // 下面这些是准备画基准线
+    if(formerLineNum !== currentLineNum) {
+      recordingAnalysisResultCtx.beginPath()      
+      let startLineYpos = this.getYpos(maxPitch, minPitch, lineYpos, noteList[0].pitch)
+      // 如果前一行和现在这一行不是同一行，就把这一行画出来
+      recordingAnalysisResultCtx.setStrokeStyle('grey')
+      // 移动到这一行的起始位置
+      recordingAnalysisResultCtx.moveTo(lineStartX, startLineYpos)
+      for (let index = 0; index < noteList.length; index++) {
+        let element = noteList[index]
+        recordingAnalysisResultCtx.lineTo(element.end, this.getYpos(maxPitch, minPitch, lineYpos, element.pitch))
+        if(index < noteList.length - 1) {
+          recordingAnalysisResultCtx.lineTo(noteList[index + 1].x, this.getYpos(maxPitch, minPitch, lineYpos, noteList[index + 1].pitch))
+        } else {
+          recordingAnalysisResultCtx.lineTo(noteList[index].end, this.getYpos(maxPitch, minPitch, lineYpos, noteList[index].pitch))
+        }
+      }
+      recordingAnalysisResultCtx.stroke()
+      recordingAnalysisResultCtx.closePath()
+      // 画完了，改动formerLineNum
+      this.formerLineNum = currentLineNum
+    }
+    // 上面是画基准线
+
+    // 取当前时间
+    let currentTime = new Date().getTime()
+    let deltaTime = currentTime - this.startTime
+    // 下面是结果的线
+    let lineResult = recordingAnalysisResult[currentLineNum - 1]
+    let lineTime = recordingEachLineTime[currentLineNum - 1]
+    let lineResultLength = lineResult.length
+    let startLineResultYpos = this.getYpos(maxPitch, minPitch, lineYpos, lineResult[0])
+    let lineResultPointXposDelta = lineWidth / (lineResult.length - 1)
+    let timeRatio = deltaTime / lineTime > 1 ? 1 : deltaTime / lineTime
+    let latterResultLength = Math.round(timeRatio * lineResultLength)
+    let currentX = timeRatio * lineWidth
+    // 获取当前位置的基准pitch
+    let referencePitch = 0
+    for (let index = 0; index < noteList.length; index++) {
+      let element = noteList[index]
+      if((currentX + lineStartX >= element.x) && (currentX + lineStartX < element.end)) {
+        referencePitch = element.pitch
+        break
+      }
+    }
+    recordingAnalysisResultCtx.beginPath()
+    if(this.formerResultLength === 1) {
+      // 假如是一行的开始
+      recordingAnalysisResultCtx.moveTo(lineStartX, startLineResultYpos)
+      this.formerPitch = lineResult[0]
+    } else {
+      // 假如不是一行的开始，就移动到上次的位置
+      let formerPitchYpos = this.getYpos(maxPitch, minPitch, lineYpos, lineResult[this.formerResultLength])
+      recordingAnalysisResultCtx.moveTo(lineStartX + this.formerResultLength * lineResultPointXposDelta, formerPitchYpos)
+      this.formerPitch = lineResult[this.formerResultLength]
+    }
+
+    for (let index = this.formerResultLength; (index <= latterResultLength) && (latterResultLength < lineResultLength) && (timeRatio <= 1); index++) {
+      let resultPointValue = lineResult[index];
+      // if(Math.abs(resultPointValue - this.formerPitch) >= mutationPitchDelta) {
+      if(this.formerPitch > maxPitch || resultPointValue > maxPitch) {
+        recordingAnalysisResultCtx.moveTo(lineStartX + index * lineResultPointXposDelta
+                                          , this.getYpos(maxPitch, minPitch, lineYpos, resultPointValue));
+      } else {
+        if (Math.abs(resultPointValue - referencePitch) <= tolerancePitchDelta) {
+          // 假如要画的pitch和参考pitch相差0.5之内，就画绿线
+          recordingAnalysisResultCtx.setStrokeStyle('green')
+        }else {
+          // 否则画红线
+          recordingAnalysisResultCtx.setStrokeStyle('red')
+        }
+        recordingAnalysisResultCtx.lineTo(lineStartX + index * lineResultPointXposDelta
+                                          , this.getYpos(maxPitch, minPitch, lineYpos, resultPointValue));
+        recordingAnalysisResultCtx.stroke()
+      }
+      this.formerPitch = resultPointValue
+    }
+    // 上面是画结果的线
+    recordingAnalysisResultCtx.closePath()
+
+    //描边，draw
+    recordingAnalysisResultCtx.draw(true)
+
+    if (currentX >= lineWidth) {
+      this.formerResultLength = 1
+      this.currentLineNum = currentLineNum + 1
+      if (currentLineNum + 1 <= this.noteInfo.length) {
+        this.$emit('picture-scroll-view-event', currentLineNum * eachLineSpace)
+      }
+      this.startTime = new Date().getTime()
+    } else {
+      this.formerResultLength = latterResultLength      
+    }
+
+    this.$apply()
+
+    this.timer = setTimeout(() => {
+      this.drawCurve()
+    }, this.timeoutSpace)
+  }
+
+  // 传入最高pitch、最低pitch、行起始y坐标和要画的音调pitch
+  // 返回一个y坐标
+  getYpos(maxPitch, minPitch, lineStartY, notePitch) {
+    let deltaPitch = maxPitch - minPitch + 2
+    let temptEachPitchSpace = this.marginBottomOfPiece / 2 / deltaPitch
+    let relativePitchYpos =
+      notePitch - minPitch >= 0
+        ? (notePitch - minPitch + 1) * temptEachPitchSpace
+        : 0
+    // 统一向上移动20个像素，要不然会和下面重叠
+    let pitchYpos = lineStartY - relativePitchYpos - 20
+    return pitchYpos
+  }
+
+  initParamsCanvas(operator) {
+    this.moveLineCtx = wx.createCanvasContext(this.moveLineCanvasId)
+    this.recordingAnalysisResultCtx = wx.createCanvasContext(this.recordingAnalysisResultCanvasId)
+    clearTimeout(this.timer)
+    this.backgroundAudioManager.stop()
+    if(operator !== 'drawCurveComplete') {
+      this.recordingAnalysisResultCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.moveLineCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight)
+      this.recordingAnalysisResultCtx.draw()
+      this.moveLineCtx.draw()
+      this.canvasWidth = 0
+      this.canvasHeight = 0
+      this.$apply()
+    }
+    this.startTime = 0
+    this.formerLineNum = 0
+    this.currentLineNum = 1
+    this.latterX = 0
+    this.formerResultLength = 1
+    this.formerPitch = 0
+    this.$emit('picture-scroll-view-event', 0)
+  }
+  events = {
+    'start-record-event': () => {
+      this.drawLine('init')
+      this.timer = setTimeout(() => {
+        this.drawLine('startDraw')
+      }, 4000)
+    },
+    'draw-result-event': () => {
+      this.drawCurve('init')
+      this.backgroundAudioManager.src = this.recordingUrl
+      
+      this.backgroundAudioManager.title = '回放'
+      // this.backgroundAudioManager.onEnded(() => {
+      //   console.log('time: ', new Date().getTime())
+      // })
+    },
+    'kill-timer-event': () => {
+      clearTimeout(this.timer)
+      this.initParamsCanvas()
+    }
+  }
+
+  onLoad() {
+    let cmpId = generateId()
+    this.moveLineCanvasId = 'move_line_' + cmpId
+    this.recordingAnalysisResultCanvasId = 'human_result_' + cmpId
+  }
+}
+</script>
